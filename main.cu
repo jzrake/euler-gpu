@@ -203,13 +203,11 @@ void update_struct_get_primitive(struct UpdateStruct update, double *primitive_h
 __global__ void update_struct_do_compute_flux(UpdateStruct update)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i > update.num_zones)
+        return;
+
     int il = i - 1;
     int ir = i;
-
-    if (i > update.num_zones)
-    {
-        return;
-    }
 
     if (il == -1)
         il += 1;
@@ -226,11 +224,9 @@ __global__ void update_struct_do_compute_flux(UpdateStruct update)
 __global__ void update_struct_do_advance_cons(UpdateStruct update, double dt)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
-
     if (i >= update.num_zones)
-    {
         return;
-    }
+
     const double dx = (update.x1 - update.x0) / update.num_zones;
     const double *fl = &update.flux[4 * (i + 0)];
     const double *fr = &update.flux[4 * (i + 1)];
@@ -245,11 +241,9 @@ __global__ void update_struct_do_advance_cons(UpdateStruct update, double dt)
 __global__ void update_struct_do_cons_to_prim(UpdateStruct update)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
-
     if (i >= update.num_zones)
-    {
         return;
-    }
+
     const double *cons = &update.conserved[4 * i];
     /* */ double *prim = &update.primitive[4 * i];
     conserved_to_primitive(cons, prim);
