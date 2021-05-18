@@ -7,18 +7,20 @@
 #define max3(a, b, c) max(a, max(b, c))
 #define min3(a, b, c) min(a, min(b, c))
 
-__device__ void conserved_to_primitive(const double *cons, double *prim)
-{
-    const double rho = cons[0];
-    const double px = cons[1];
-    const double py = cons[2];
-    const double energy = cons[3];
+typedef double real;
 
-    const double vx = px / rho;
-    const double vy = py / rho;
-    const double kinetic_energy = 0.5 * rho * (vx * vx + vy * vy);
-    const double thermal_energy = energy - kinetic_energy;
-    const double pressure = thermal_energy * (ADIABATIC_GAMMA - 1.0);
+__device__ void conserved_to_primitive(const real *cons, real *prim)
+{
+    const real rho = cons[0];
+    const real px = cons[1];
+    const real py = cons[2];
+    const real energy = cons[3];
+
+    const real vx = px / rho;
+    const real vy = py / rho;
+    const real kinetic_energy = 0.5 * rho * (vx * vx + vy * vy);
+    const real thermal_energy = energy - kinetic_energy;
+    const real pressure = thermal_energy * (ADIABATIC_GAMMA - 1.0);
 
     prim[0] = rho;
     prim[1] = vx;
@@ -26,17 +28,17 @@ __device__ void conserved_to_primitive(const double *cons, double *prim)
     prim[3] = pressure;
 }
 
-__device__ __host__ void primitive_to_conserved(const double *prim, double *cons)
+__device__ __host__ void primitive_to_conserved(const real *prim, real *cons)
 {
-    const double rho = prim[0];
-    const double vx = prim[1];
-    const double vy = prim[2];
-    const double pressure = prim[3];
+    const real rho = prim[0];
+    const real vx = prim[1];
+    const real vy = prim[2];
+    const real pressure = prim[3];
 
-    const double px = vx * rho;
-    const double py = vy * rho;
-    const double kinetic_energy = 0.5 * rho * (vx * vx + vy * vy);
-    const double thermal_energy = pressure / (ADIABATIC_GAMMA - 1.0);
+    const real px = vx * rho;
+    const real py = vy * rho;
+    const real kinetic_energy = 0.5 * rho * (vx * vx + vy * vy);
+    const real thermal_energy = pressure / (ADIABATIC_GAMMA - 1.0);
 
     cons[0] = rho;
     cons[1] = px;
@@ -44,7 +46,7 @@ __device__ __host__ void primitive_to_conserved(const double *prim, double *cons
     cons[3] = kinetic_energy + thermal_energy;
 }
 
-__device__ double primitive_to_velocity_component(const double *prim, int direction)
+__device__ real primitive_to_velocity_component(const real *prim, int direction)
 {
     switch (direction)
     {
@@ -54,11 +56,11 @@ __device__ double primitive_to_velocity_component(const double *prim, int direct
     }
 }
 
-__device__ void primitive_to_flux_vector(const double *prim, double *flux, int direction)
+__device__ void primitive_to_flux_vector(const real *prim, real *flux, int direction)
 {
-    const double vn = primitive_to_velocity_component(prim, direction);
-    const double pressure = prim[3];
-    double cons[4];
+    const real vn = primitive_to_velocity_component(prim, direction);
+    const real pressure = prim[3];
+    real cons[4];
     primitive_to_conserved(prim, cons);
 
     flux[0] = vn * cons[0];
@@ -67,29 +69,29 @@ __device__ void primitive_to_flux_vector(const double *prim, double *flux, int d
     flux[3] = vn * cons[3] + pressure * vn;
 }
 
-__device__ double primitive_to_sound_speed_squared(const double *prim)
+__device__ real primitive_to_sound_speed_squared(const real *prim)
 {
-    const double rho = prim[0];
-    const double pressure = prim[3];
+    const real rho = prim[0];
+    const real pressure = prim[3];
     return ADIABATIC_GAMMA * pressure / rho;
 }
 
-__device__ void primitive_to_outer_wavespeeds(const double *prim, double *wavespeeds, int direction)
+__device__ void primitive_to_outer_wavespeeds(const real *prim, real *wavespeeds, int direction)
 {
-    const double cs = sqrt(primitive_to_sound_speed_squared(prim));
-    const double vn = primitive_to_velocity_component(prim, direction);
+    const real cs = sqrt(primitive_to_sound_speed_squared(prim));
+    const real vn = primitive_to_velocity_component(prim, direction);
     wavespeeds[0] = vn - cs;
     wavespeeds[1] = vn + cs;
 }
 
-__device__ void riemann_hlle(const double *pl, const double *pr, double *flux, int direction)
+__device__ void riemann_hlle(const real *pl, const real *pr, real *flux, int direction)
 {
-    double ul[4];
-    double ur[4];
-    double fl[4];
-    double fr[4];
-    double al[2];
-    double ar[2];
+    real ul[4];
+    real ur[4];
+    real fl[4];
+    real fr[4];
+    real al[2];
+    real ar[2];
 
     primitive_to_conserved(pl, ul);
     primitive_to_conserved(pr, ur);
@@ -98,8 +100,8 @@ __device__ void riemann_hlle(const double *pl, const double *pr, double *flux, i
     primitive_to_outer_wavespeeds(pl, al, direction);
     primitive_to_outer_wavespeeds(pr, ar, direction);
 
-    const double am = min3(al[0], ar[0], 0.0);
-    const double ap = max3(al[1], ar[1], 0.0);
+    const real am = min3(al[0], ar[0], 0.0);
+    const real ap = max3(al[1], ar[1], 0.0);
 
     for (int i = 0; i < 4; ++i)
     {
@@ -107,14 +109,14 @@ __device__ void riemann_hlle(const double *pl, const double *pr, double *flux, i
     }
 }
 
-void initial_primitive(double *primitive, int num_zones, double x0, double x1)
+void initial_primitive(real *primitive, int num_zones, real x0, real x1)
 {
-    double dx = (x1 - x0) / num_zones;
+    real dx = (x1 - x0) / num_zones;
 
     for (int i = 0; i < num_zones; ++i)
     {
-        double x = (i + 0.5) * dx;
-        double *prim = &primitive[i * 4];
+        real x = (i + 0.5) * dx;
+        real *prim = &primitive[i * 4];
 
         if (x < 0.5 * (x0 + x1))
         {
@@ -136,23 +138,23 @@ void initial_primitive(double *primitive, int num_zones, double x0, double x1)
 struct UpdateStruct
 {
     int num_zones;
-    double x0;
-    double x1;
-    double *primitive;
-    double *conserved;
-    double *flux;
+    real x0;
+    real x1;
+    real *primitive;
+    real *conserved;
+    real *flux;
 };
 
-struct UpdateStruct update_struct_new(int num_zones, double x0, double x1)
+struct UpdateStruct update_struct_new(int num_zones, real x0, real x1)
 {
     struct UpdateStruct update;
     update.num_zones = num_zones;
     update.x0 = x0;
     update.x1 = x1;
 
-    cudaMalloc(&update.primitive, num_zones * 4 * sizeof(double));
-    cudaMalloc(&update.conserved, num_zones * 4 * sizeof(double));
-    cudaMalloc(&update.flux, (num_zones + 1) * 4 * sizeof(double));
+    cudaMalloc(&update.primitive, num_zones * 4 * sizeof(real));
+    cudaMalloc(&update.conserved, num_zones * 4 * sizeof(real));
+    cudaMalloc(&update.flux, (num_zones + 1) * 4 * sizeof(real));
 
     return update;
 }
@@ -164,38 +166,38 @@ void update_struct_del(struct UpdateStruct update)
     cudaFree(update.flux);
 }
 
-void update_struct_set_primitive(struct UpdateStruct update, const double *primitive_host)
+void update_struct_set_primitive(struct UpdateStruct update, const real *primitive_host)
 {
-    double *conserved_host = (double*) malloc(update.num_zones * 4 * sizeof(double));
+    real *conserved_host = (real*) malloc(update.num_zones * 4 * sizeof(real));
 
     for (int i = 0; i < update.num_zones; ++i)
     {
-        const double *prim = &primitive_host[4 * i];
-        /* */ double *cons = &conserved_host[4 * i];
+        const real *prim = &primitive_host[4 * i];
+        /* */ real *cons = &conserved_host[4 * i];
         primitive_to_conserved(prim, cons);
     }
 
     cudaMemcpy(
         update.primitive,
         primitive_host,
-        update.num_zones * 4 * sizeof(double),
+        update.num_zones * 4 * sizeof(real),
         cudaMemcpyHostToDevice
     );
 
     cudaMemcpy(
         update.conserved,
         conserved_host,
-        update.num_zones * 4 * sizeof(double),
+        update.num_zones * 4 * sizeof(real),
         cudaMemcpyHostToDevice
     );
     free(conserved_host);
 }
 
-void update_struct_get_primitive(struct UpdateStruct update, double *primitive_host)
+void update_struct_get_primitive(struct UpdateStruct update, real *primitive_host)
 {
     cudaMemcpy(primitive_host,
         update.primitive,
-        update.num_zones * 4 * sizeof(double),
+        update.num_zones * 4 * sizeof(real),
         cudaMemcpyDeviceToHost
     );
 }
@@ -203,7 +205,7 @@ void update_struct_get_primitive(struct UpdateStruct update, double *primitive_h
 __global__ void update_struct_do_compute_flux(UpdateStruct update)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i > update.num_zones)
+    if (i >= update.num_zones + 1)
         return;
 
     int il = i - 1;
@@ -215,58 +217,49 @@ __global__ void update_struct_do_compute_flux(UpdateStruct update)
     if (ir == update.num_zones)
         ir -= 1;
 
-    const double *pl = &update.primitive[4 * il];
-    const double *pr = &update.primitive[4 * ir];
-    double *flux = &update.flux[4 * i];
+    const real *pl = &update.primitive[4 * il];
+    const real *pr = &update.primitive[4 * ir];
+    real *flux = &update.flux[4 * i];
     riemann_hlle(pl, pr, flux, 0);
 }
 
-__global__ void update_struct_do_advance_cons(UpdateStruct update, double dt)
+__global__ void update_struct_do_advance_cons(UpdateStruct update, real dt)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= update.num_zones)
         return;
 
-    const double dx = (update.x1 - update.x0) / update.num_zones;
-    const double *fl = &update.flux[4 * (i + 0)];
-    const double *fr = &update.flux[4 * (i + 1)];
-    double *cons = &update.conserved[4 * i];
+    const real dx = (update.x1 - update.x0) / update.num_zones;
+    const real *fl = &update.flux[4 * (i + 0)];
+    const real *fr = &update.flux[4 * (i + 1)];
+    real *cons = &update.conserved[4 * i];
+    real *prim = &update.primitive[4 * i];
 
     for (int q = 0; q < 4; ++q)
     {
         cons[q] -= (fr[q] - fl[q]) * dt / dx;
     }
-}
-
-__global__ void update_struct_do_cons_to_prim(UpdateStruct update)
-{
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= update.num_zones)
-        return;
-
-    const double *cons = &update.conserved[4 * i];
-    /* */ double *prim = &update.primitive[4 * i];
     conserved_to_primitive(cons, prim);
 }
 
 int main()
 {
-    const int num_zones = 1 << 14;
-    const int block_size = 256;
-    const int fold = 10;
-    const double x0 = 0.0;
-    const double x1 = 1.0;
-    const double dx = (x1 - x0) / num_zones;
+    const int num_zones = 1 << 15;
+    const int block_size = 64;
+    const int fold = 1000;
+    const real x0 = 0.0;
+    const real x1 = 1.0;
+    const real dx = (x1 - x0) / num_zones;
 
-    double *primitive = (double*) malloc(num_zones * 4 * sizeof(double));
+    real *primitive = (real*) malloc(num_zones * 4 * sizeof(real));
     struct UpdateStruct update = update_struct_new(num_zones, x0, x1);
 
     initial_primitive(primitive, num_zones, x0, x1);
     update_struct_set_primitive(update, primitive);
 
     int iteration = 0;
-    double time = 0.0;
-    double dt = dx * 0.1;
+    real time = 0.0;
+    real dt = dx * 0.1;
 
     while (time < 0.2)
     {
@@ -276,15 +269,14 @@ int main()
         {
             update_struct_do_compute_flux<<<num_zones / block_size + 1, block_size>>>(update);
             update_struct_do_advance_cons<<<num_zones / block_size + 0, block_size>>>(update, dt);
-            update_struct_do_cons_to_prim<<<num_zones / block_size + 0, block_size>>>(update);
 
             time += dt;
             iteration += 1;
         }
         clock_t end = clock();
 
-        double seconds = ((double) (end - start)) / CLOCKS_PER_SEC;
-        double mzps = (num_zones / 1e6) / seconds * fold;
+        real seconds = ((real) (end - start)) / CLOCKS_PER_SEC;
+        real mzps = (num_zones / 1e6) / seconds * fold;
         printf("[%d] t=%.4f Mzps=%.2f\n", iteration, time, mzps);
     }
 
@@ -295,8 +287,8 @@ int main()
 
     for (int i = 0; i < num_zones; ++i)
     {
-        double *prim = &primitive[i * 4];
-        double x = (i + 0.5) * dx;
+        real *prim = &primitive[i * 4];
+        real x = (i + 0.5) * dx;
         fprintf(outfile, "%f %f %f %f\n", x, prim[0], prim[1], prim[3]);
     }
     fclose(outfile);
