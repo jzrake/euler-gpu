@@ -2,10 +2,6 @@
 #include <time.h>
 
 #define ADIABATIC_GAMMA (5.0 / 3.0)
-#define max(a, b) (a) > (b) ? (a) : (b)
-#define min(a, b) (a) < (b) ? (a) : (b)
-#define max3(a, b, c) max(a, max(b, c))
-#define min3(a, b, c) min(a, min(b, c))
 
 typedef double real;
 
@@ -100,8 +96,8 @@ __device__ void riemann_hlle(const real *pl, const real *pr, real *flux, int dir
     primitive_to_outer_wavespeeds(pl, al, direction);
     primitive_to_outer_wavespeeds(pr, ar, direction);
 
-    const real am = min3(al[0], ar[0], 0.0);
-    const real ap = max3(al[1], ar[1], 0.0);
+    const real am = min(0.0, min(al[0], ar[0]));
+    const real ap = max(0.0, max(al[1], ar[1]));
 
     for (int i = 0; i < 4; ++i)
     {
@@ -244,9 +240,9 @@ __global__ void update_struct_do_advance_cons(UpdateStruct update, real dt)
 
 int main()
 {
-    const int num_zones = 1 << 15;
-    const int block_size = 64;
-    const int fold = 1000;
+    const int num_zones = 1 << 22;
+    const int block_size = 32;
+    const int fold = 100;
     const real x0 = 0.0;
     const real x1 = 1.0;
     const real dx = (x1 - x0) / num_zones;
@@ -261,7 +257,7 @@ int main()
     real time = 0.0;
     real dt = dx * 0.1;
 
-    while (time < 0.2)
+    while (time < 0.1)
     {
         clock_t start = clock();
 
@@ -277,7 +273,7 @@ int main()
 
         real seconds = ((real) (end - start)) / CLOCKS_PER_SEC;
         real mzps = (num_zones / 1e6) / seconds * fold;
-        printf("[%d] t=%.4f Mzps=%.2f\n", iteration, time, mzps);
+        printf("[%d] t=%.3e Mzps=%.2f\n", iteration, time, mzps);
     }
 
     update_struct_get_primitive(update, primitive);
