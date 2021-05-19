@@ -5,44 +5,58 @@
 
 typedef double real;
 
-__device__ void conserved_to_primitive(const real *cons, real *prim)
+__host__ __device__ void conserved_to_primitive(const real *cons, real *prim)
 {
-    const real rho = cons[0];
-    const real px = cons[1];
-    const real py = cons[2];
-    const real energy = cons[3];
+    const real newton_iter_max = 50;
+    const real error_tolerance = 1e-12 * cons[0];
+    const real gm              = ADIABATIC_GAMMA;
+    const real m               = cons[0];
+    const real tau             = cons[3];
+    const real ss              = cons[1] * cons[1] + cons[2] * cons[2];
+    real w0;
+    real iteration             = 0;
+    real p                     = 0.0;
 
-    const real vx = px / rho;
-    const real vy = py / rho;
-    const real kinetic_energy = 0.5 * rho * (vx * vx + vy * vy);
-    const real thermal_energy = energy - kinetic_energy;
-    const real pressure = thermal_energy * (ADIABATIC_GAMMA - 1.0);
+    while (true) {
+        const real et = tau + p + m;
+        const real b2 = min(ss / et / et, 1.0 - 1e-10);
+        const real w2 = 1.0 / (1.0 - b2);
+        const real w  = sqrt(w2);
+        const real e  = (tau + m * (1.0 - w) + p * (1.0 - w2)) / (m * w);
+        const real d  = m / w;
+        const real h  = 1.0 + e + p / d;
+        const real a2 = gm * p / (d * h);
+        const real f  = d * e * (gm - 1.0) - p;
+        const real g  = b2 * a2 - 1.0;
 
-    prim[0] = rho;
-    prim[1] = vx;
-    prim[2] = vy;
-    prim[3] = pressure;
+        p -= f / g;
+
+        if (abs(f) < error_tolerance || iteration == newton_iter_max) {
+            w0 = w;
+            break;
+        }
+        iteration += 1;
+    }
+
+    prim[0] = m / w0;
+    prim[1] = w0 * cons[1] / (tau + m + p);
+    prim[2] = w0 * cons[2] / (tau + m + p);
+    prim[3] = p;
 }
 
-__device__ __host__ void primitive_to_conserved(const real *prim, real *cons)
+__host__ __device__ real primitive_to_gamma_beta_squared(const real *prim)
 {
-    const real rho = prim[0];
-    const real vx = prim[1];
-    const real vy = prim[2];
-    const real pressure = prim[3];
-
-    const real px = vx * rho;
-    const real py = vy * rho;
-    const real kinetic_energy = 0.5 * rho * (vx * vx + vy * vy);
-    const real thermal_energy = pressure / (ADIABATIC_GAMMA - 1.0);
-
-    cons[0] = rho;
-    cons[1] = px;
-    cons[2] = py;
-    cons[3] = kinetic_energy + thermal_energy;
+    const real u1 = prim[1];
+    const real u2 = prim[2];
+    return u1 * u1 + u2 * u2;
 }
 
-__device__ real primitive_to_velocity_component(const real *prim, int direction)
+__host__ __device__ real primitive_to_lorentz_factor(const real *prim)
+{
+    return sqrt(1.0 + primitive_to_gamma_beta_squared(prim));
+}
+
+__host__ __device__ real primitive_to_gamma_beta_component(const real *prim, int direction)
 {
     switch (direction)
     {
@@ -52,32 +66,74 @@ __device__ real primitive_to_velocity_component(const real *prim, int direction)
     }
 }
 
-__device__ void primitive_to_flux_vector(const real *prim, real *flux, int direction)
+__host__ __device__ real primitive_to_beta_component(const real *prim, int direction)
 {
-    const real vn = primitive_to_velocity_component(prim, direction);
-    const real pressure = prim[3];
+    const real w = primitive_to_lorentz_factor(prim);
+
+    switch (direction)
+    {
+        case 0: return prim[1] / w;
+        case 1: return prim[2] / w;
+        default: return 0.0;
+    }
+}
+
+__host__ __device__ real primitive_to_enthalpy_density(const real* prim)
+{
+    const real rho = prim[0];
+    const real pre = prim[3];
+    return rho + pre * (1.0 + 1.0 / (ADIABATIC_GAMMA - 1.0));
+}
+
+__host__ __device__ __host__ void primitive_to_conserved(const real *prim, real *cons)
+{
+    const real rho = prim[0];
+    const real u1 = prim[1];
+    const real u2 = prim[2];
+    const real pre = prim[3];
+
+    const real w = primitive_to_lorentz_factor(prim);
+    const real h = primitive_to_enthalpy_density(prim) / rho;
+    const real m = rho * w;
+
+    cons[0] = m;
+    cons[1] = m * h * u1;
+    cons[2] = m * h * u2;
+    cons[3] = m * (h * w - 1.0) - pre;
+}
+
+__host__ __device__ void primitive_to_flux_vector(const real *prim, real *flux, int direction)
+{
+    const real vn = primitive_to_beta_component(prim, direction);
+    const real pre = prim[3];
     real cons[4];
     primitive_to_conserved(prim, cons);
 
     flux[0] = vn * cons[0];
-    flux[1] = vn * cons[1] + pressure * (direction == 0);
-    flux[2] = vn * cons[2] + pressure * (direction == 1);
-    flux[3] = vn * cons[3] + pressure * vn;
+    flux[1] = vn * cons[1] + pre * (direction == 0);
+    flux[2] = vn * cons[2] + pre * (direction == 1);
+    flux[3] = vn * cons[3] + pre * vn;
 }
 
-__device__ real primitive_to_sound_speed_squared(const real *prim)
+__host__ __device__ real primitive_to_sound_speed_squared(const real *prim)
 {
-    const real rho = prim[0];
-    const real pressure = prim[3];
-    return ADIABATIC_GAMMA * pressure / rho;
+    const real pre = prim[3];
+    const real rho_h = primitive_to_enthalpy_density(prim);
+    return ADIABATIC_GAMMA * pre / rho_h;
 }
 
-__device__ void primitive_to_outer_wavespeeds(const real *prim, real *wavespeeds, int direction)
+__host__ __device__ void primitive_to_outer_wavespeeds(const real *prim, real *wavespeeds, int direction)
 {
-    const real cs = sqrt(primitive_to_sound_speed_squared(prim));
-    const real vn = primitive_to_velocity_component(prim, direction);
-    wavespeeds[0] = vn - cs;
-    wavespeeds[1] = vn + cs;
+    const real a2 = primitive_to_sound_speed_squared(prim);
+    const real un = primitive_to_gamma_beta_component(prim, direction);
+    const real uu = primitive_to_gamma_beta_squared(prim);
+    const real vv = uu / (1.0 + uu);
+    const real v2 = un * un / (1.0 + uu);
+    const real vn = sqrt(v2);
+    const real k0 = sqrt(a2 * (1.0 - vv) * (1.0 - vv * a2 - v2 * (1.0 - a2)));
+
+    wavespeeds[0] = (vn * (1.0 - a2) - k0) / (1.0 - vv * a2);
+    wavespeeds[1] = (vn * (1.0 - a2) + k0) / (1.0 - vv * a2);
 }
 
 __device__ void riemann_hlle(const real *pl, const real *pr, real *flux, int direction)
@@ -279,7 +335,7 @@ int main()
     update_struct_get_primitive(update, primitive);
     update_struct_del(update);
 
-    FILE* outfile = fopen("euler1d.dat", "w");
+    FILE* outfile = fopen("sr1d.dat", "w");
 
     for (int i = 0; i < num_zones; ++i)
     {
