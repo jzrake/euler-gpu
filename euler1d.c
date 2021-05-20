@@ -68,7 +68,7 @@ void compute_memcpy_device_to_host(void* dst, const void* src, size_t count)
 #define min2(a, b) (a) < (b) ? (a) : (b)
 #define max3(a, b, c) max2(a, max2(b, c))
 #define min3(a, b, c) min2(a, min2(b, c))
-typedef float real;
+typedef double real;
 
 
 
@@ -168,6 +168,7 @@ __host__ __device__ void riemann_hlle(const real *pl, const real *pr, real *flux
     const real am = min3(0.0, al[0], ar[0]);
     const real ap = max3(0.0, al[1], ar[1]);
 
+    #pragma omp simd
     for (int i = 0; i < 4; ++i)
     {
         flux[i] = (fl[i] * ap - fr[i] * am - (ul[i] - ur[i]) * ap * am) / (ap - am);
@@ -214,6 +215,7 @@ __device__ void do_advance_cons(struct UpdateStruct update, int i, real dt)
     real *cons = &update.conserved[4 * i];
     real *prim = &update.primitive[4 * i];
 
+    #pragma omp simd
     for (int q = 0; q < 4; ++q)
     {
         cons[q] -= (fr[q] - fl[q]) * dt / dx;
@@ -282,8 +284,21 @@ void update_struct_get_primitive(struct UpdateStruct update, real *primitive_hos
 
 #ifndef __NVCC__
 
+void report_system()
+{
+    system("cpuinfo | grep Brand");
+    system("cpuinfo | grep Count");
+    printf("OpenMP threads: %s\n", getenv("OMP_NUM_THREADS"));
+}
+
+int clocks_per_sec()
+{
+    return CLOCKS_PER_SEC / atoi(getenv("OMP_NUM_THREADS"));
+}
+
 void update_struct_do_compute_flux(struct UpdateStruct update)
 {
+    #pragma omp parallel for
     for (int i = 0; i < update.num_zones + 1; ++i)
     {
         do_flux(update, i);
@@ -292,13 +307,32 @@ void update_struct_do_compute_flux(struct UpdateStruct update)
 
 void update_struct_do_advance_cons(struct UpdateStruct update, real dt)
 {
-    for (int i = 0; i < update.num_zones + 1; ++i)
+    #pragma omp parallel for
+    for (int i = 0; i < update.num_zones; ++i)
     {
         do_advance_cons(update, i, dt);
     }
 }
 
 #else
+
+void report_system()
+{
+    int device_count;
+    struct cudaDeviceProp device_props;
+    cudaGetDeviceCount(&device_count);
+    cudaGetDeviceProperties(&device_props, 0);
+    printf("GPU count: %d\n", device_count);
+    printf("GPU clock rate: %.3f MHz\n", device_props.clockRate / 1e6);
+    printf("GPU supports ECC: %s\n", device_props.ECCEnabled ? "Yes" : "No");
+    printf("GPU warp size: %d\n", device_props.warpSize);
+    printf("GPU global memory: %.3fGB\n", device_props.totalGlobalMem / 1e9);
+}
+
+int clocks_per_sec()
+{
+    return CLOCKS_PER_SEC;
+}
 
 __global__ void cuda_do_compute_flux(struct UpdateStruct update)
 {
@@ -370,9 +404,9 @@ void initial_primitive(real *primitive, int num_zones, real x0, real x1)
 // ============================================================================
 int main()
 {
-    const int num_zones = 1 << 22;
+    const int num_zones = 1 << 20;
     const int block_size = 32;
-    const int fold = 1;
+    const int fold = 10;
     const real x0 = 0.0;
     const real x1 = 1.0;
     const real dx = (x1 - x0) / num_zones;
@@ -380,6 +414,7 @@ int main()
     real *primitive = (real*) malloc(num_zones * 4 * sizeof(real));
     struct UpdateStruct update = update_struct_new(num_zones, block_size, x0, x1);
 
+    report_system();
     initial_primitive(primitive, num_zones, x0, x1);
     update_struct_set_primitive(update, primitive);
 
@@ -401,7 +436,7 @@ int main()
         }
         clock_t end = clock();
 
-        real seconds = ((real) (end - start)) / CLOCKS_PER_SEC;
+        real seconds = ((real) (end - start)) / clocks_per_sec();
         real mzps = (num_zones / 1e6) / seconds * fold;
         printf("[%d] t=%.3e Mzps=%.2f\n", iteration, time, mzps);
     }

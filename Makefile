@@ -1,5 +1,5 @@
 CUFLAGS = -Xptxas -O3
-CFLAGS = -Wall -O3
+CFLAGS = -Wall -O3 -fopenmp
 
 EXE = euler1d_cpu euler1d_gpu
 
