@@ -1,1 +1,1 @@
-#include "euler1d_cpu.c"
+#include "euler1d.c"
