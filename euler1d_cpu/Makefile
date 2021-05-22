@@ -1,4 +1,4 @@
-CFLAGS = -Wall -O3
+CFLAGS = -Wall -O3 -lm
 EXE = euler1d
 
 all: $(EXE)

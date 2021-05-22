@@ -168,7 +168,7 @@ __host__ __device__ void riemann_hlle(const real *pl, const real *pr, real *flux
     const real am = min3(0.0, al[0], ar[0]);
     const real ap = max3(0.0, al[1], ar[1]);
 
-    #pragma omp simd
+    // #pragma omp simd
     for (int i = 0; i < 4; ++i)
     {
         flux[i] = (fl[i] * ap - fr[i] * am - (ul[i] - ur[i]) * ap * am) / (ap - am);
@@ -215,7 +215,7 @@ __device__ void do_advance_cons(struct UpdateStruct update, int i, real dt)
     real *cons = &update.conserved[4 * i];
     real *prim = &update.primitive[4 * i];
 
-    #pragma omp simd
+    // #pragma omp simd
     for (int q = 0; q < 4; ++q)
     {
         cons[q] -= (fr[q] - fl[q]) * dt / dx;
@@ -298,7 +298,7 @@ int clocks_per_sec()
 
 void update_struct_do_compute_flux(struct UpdateStruct update)
 {
-    #pragma omp parallel for
+    // #pragma omp parallel for
     for (int i = 0; i < update.num_zones + 1; ++i)
     {
         do_flux(update, i);
@@ -307,7 +307,7 @@ void update_struct_do_compute_flux(struct UpdateStruct update)
 
 void update_struct_do_advance_cons(struct UpdateStruct update, real dt)
 {
-    #pragma omp parallel for
+    // #pragma omp parallel for
     for (int i = 0; i < update.num_zones; ++i)
     {
         do_advance_cons(update, i, dt);

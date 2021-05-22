@@ -1,9 +1,13 @@
-CU_FLAGS = -Xptxas -O3
+default:
+	$(MAKE) -C euler1d_cpu
+	$(MAKE) -C euler1d_gpu
+	$(MAKE) -C euler1d_uni
+	$(MAKE) -C sr1d_cpu
+	$(MAKE) -C sr1d_gpu
 
-all: euler1d sr1d
-
-euler1d: euler1d.cu
-	nvcc $(CU_FLAGS) -o $@ $^
-
-sr1d: sr1d.cu
-	nvcc $(CU_FLAGS) -o $@ $^
+clean:
+	$(MAKE) -C euler1d_cpu clean
+	$(MAKE) -C euler1d_gpu clean
+	$(MAKE) -C euler1d_uni clean
+	$(MAKE) -C sr1d_cpu clean
+	$(MAKE) -C sr1d_gpu clean
