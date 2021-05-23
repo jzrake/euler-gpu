@@ -7,7 +7,16 @@
 #define ADIABATIC_GAMMA (5.0 / 3.0)
 #define min2(a, b) (a) < (b) ? (a) : (b)
 #define max2(a, b) (a) > (b) ? (a) : (b)
+
+#ifdef SINGLE
+typedef float real;
+#define square_root sqrtf
+#define absolute_value fabsf
+#else
 typedef double real;
+#define square_root sqrt
+#define absolute_value fabs
+#endif
 
 void conserved_to_primitive(const real *cons, real *prim)
 {
@@ -25,7 +34,7 @@ void conserved_to_primitive(const real *cons, real *prim)
         const real et = tau + p + m;
         const real b2 = min2(ss / et / et, 1.0 - 1e-10);
         const real w2 = 1.0 / (1.0 - b2);
-        const real w  = sqrt(w2);
+        const real w  = square_root(w2);
         const real e  = (tau + m * (1.0 - w) + p * (1.0 - w2)) / (m * w);
         const real d  = m / w;
         const real h  = 1.0 + e + p / d;
@@ -35,7 +44,7 @@ void conserved_to_primitive(const real *cons, real *prim)
 
         p -= f / g;
 
-        if (fabs(f) < error_tolerance || iteration == newton_iter_max) {
+        if (absolute_value(f) < error_tolerance || iteration == newton_iter_max) {
             w0 = w;
             break;
         }
@@ -57,7 +66,7 @@ real primitive_to_gamma_beta_squared(const real *prim)
 
 real primitive_to_lorentz_factor(const real *prim)
 {
-    return sqrt(1.0 + primitive_to_gamma_beta_squared(prim));
+    return square_root(1.0 + primitive_to_gamma_beta_squared(prim));
 }
 
 real primitive_to_gamma_beta_component(const real *prim, int direction)
@@ -133,8 +142,8 @@ void primitive_to_outer_wavespeeds(const real *prim, real *wavespeeds, int direc
     const real uu = primitive_to_gamma_beta_squared(prim);
     const real vv = uu / (1.0 + uu);
     const real v2 = un * un / (1.0 + uu);
-    const real vn = sqrt(v2);
-    const real k0 = sqrt(a2 * (1.0 - vv) * (1.0 - vv * a2 - v2 * (1.0 - a2)));
+    const real vn = square_root(v2);
+    const real k0 = square_root(a2 * (1.0 - vv) * (1.0 - vv * a2 - v2 * (1.0 - a2)));
 
     wavespeeds[0] = (vn * (1.0 - a2) - k0) / (1.0 - vv * a2);
     wavespeeds[1] = (vn * (1.0 - a2) + k0) / (1.0 - vv * a2);

@@ -8,7 +8,13 @@
 #define min2(a, b) (a) < (b) ? (a) : (b)
 #define max2(a, b) (a) > (b) ? (a) : (b)
 
+#ifdef SINGLE
+typedef float real;
+#define square_root sqrtf
+#else
 typedef double real;
+#define square_root sqrt
+#endif
 
 void conserved_to_primitive(const real *cons, real *prim)
 {
@@ -79,7 +85,7 @@ real primitive_to_sound_speed_squared(const real *prim)
 
 void primitive_to_outer_wavespeeds(const real *prim, real *wavespeeds, int direction)
 {
-    const real cs = sqrt(primitive_to_sound_speed_squared(prim));
+    const real cs = square_root(primitive_to_sound_speed_squared(prim));
     const real vn = primitive_to_velocity_component(prim, direction);
     wavespeeds[0] = vn - cs;
     wavespeeds[1] = vn + cs;
