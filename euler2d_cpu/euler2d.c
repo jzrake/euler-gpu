@@ -11,9 +11,11 @@
 #ifdef SINGLE
 typedef float real;
 #define square_root sqrtf
+#define power powf
 #else
 typedef double real;
 #define square_root sqrt
+#define power pow
 #endif
 
 void conserved_to_primitive(const real *cons, real *prim)
@@ -116,52 +118,66 @@ void riemann_hlle(const real *pl, const real *pr, real *flux, int direction)
     }
 }
 
-void initial_primitive(real *primitive, int num_zones, real x0, real x1)
+void initial_primitive(real *primitive, int ni, int nj, real x0, real x1, real y0, real y1)
 {
-    real dx = (x1 - x0) / num_zones;
+    real dx = (x1 - x0) / ni;
+    real dy = (y1 - y0) / nj;
 
-    for (int i = 0; i < num_zones; ++i)
+    for (int i = 0; i < ni; ++i)
     {
-        real x = (i + 0.5) * dx;
-        real *prim = &primitive[i * 4];
+        for (int j = 0; j < nj; ++j)
+        {
+            real x = (i + 0.5) * dx;
+            real y = (j + 0.5) * dy;
+            real *prim = &primitive[4 * (i * nj + j)];
+            real r2 = power(x - 0.5, 2) + power(y - 0.5, 2);
 
-        if (x < 0.5 * (x0 + x1))
-        {
-            prim[0] = 1.0;
-            prim[1] = 0.0;
-            prim[2] = 0.0;
-            prim[3] = 1.0;
-        }
-        else
-        {
-            prim[0] = 0.1;
-            prim[1] = 0.0;
-            prim[2] = 0.0;
-            prim[3] = 0.125;
+            if (square_root(r2) < 0.125)
+            {
+                prim[0] = 1.0;
+                prim[1] = 0.0;
+                prim[2] = 0.0;
+                prim[3] = 1.0;
+            }
+            else
+            {
+                prim[0] = 0.1;
+                prim[1] = 0.0;
+                prim[2] = 0.0;
+                prim[3] = 0.125;
+            }
         }
     }
 }
 
 struct UpdateStruct
 {
-    int num_zones;
+    int ni;
+    int nj;
     real x0;
     real x1;
+    real y0;
+    real y1;
     real *primitive;
     real *conserved;
-    real *flux;
+    real *flux_i;
+    real *flux_j;
 };
 
-struct UpdateStruct update_struct_new(int num_zones, real x0, real x1)
+struct UpdateStruct update_struct_new(int ni, int nj, real x0, real x1, real y0, real y1)
 {
     struct UpdateStruct update;
-    update.num_zones = num_zones;
+    update.ni = ni;
+    update.nj = nj;
     update.x0 = x0;
     update.x1 = x1;
+    update.y0 = y0;
+    update.y1 = y1;
 
-    update.primitive = (real*) malloc(num_zones * 4 * sizeof(real));
-    update.conserved = (real*) malloc(num_zones * 4 * sizeof(real));
-    update.flux = (real*) malloc((num_zones + 1) * 4 * sizeof(real));
+    update.primitive = (real*) malloc(ni * nj * 4 * sizeof(real));
+    update.conserved = (real*) malloc(ni * nj * 4 * sizeof(real));
+    update.flux_i = (real*) malloc((ni + 1) * nj * 4 * sizeof(real));
+    update.flux_j = (real*) malloc(ni * (nj + 1) * 4 * sizeof(real));
 
     return update;
 }
@@ -170,97 +186,147 @@ void update_struct_del(struct UpdateStruct update)
 {
     free(update.primitive);
     free(update.conserved);
-    free(update.flux);
+    free(update.flux_i);
+    free(update.flux_j);
 }
 
 void update_struct_set_primitive(struct UpdateStruct update, const real *primitive_host)
 {
-    real *conserved_host = (real*) malloc(update.num_zones * 4 * sizeof(real));
+    int ni = update.ni;
+    int nj = update.nj;
+    int num_zones = ni * nj;
+    real *conserved_host = (real*) malloc(num_zones * 4 * sizeof(real));
 
-    for (int i = 0; i < update.num_zones; ++i)
+    for (int i = 0; i < ni; ++i)
     {
-        const real *prim = &primitive_host[4 * i];
-        /* */ real *cons = &conserved_host[4 * i];
-        primitive_to_conserved(prim, cons);
+        for (int j = 0; j < nj; ++j)
+        {
+            const real *prim = &primitive_host[4 * (i * nj + j)];
+            /* */ real *cons = &conserved_host[4 * (i * nj + j)];
+            primitive_to_conserved(prim, cons);
+        }
     }
 
     memcpy(
         update.primitive,
         primitive_host,
-        update.num_zones * 4 * sizeof(real)
+        num_zones * 4 * sizeof(real)
     );
 
     memcpy(
         update.conserved,
         conserved_host,
-        update.num_zones * 4 * sizeof(real)
+        num_zones * 4 * sizeof(real)
     );
     free(conserved_host);
 }
 
 void update_struct_get_primitive(struct UpdateStruct update, real *primitive_host)
 {
+    int num_zones = update.ni * update.nj;
     memcpy(primitive_host,
         update.primitive,
-        update.num_zones * 4 * sizeof(real)
+        num_zones * 4 * sizeof(real)
     );
 }
 
 void update_struct_do_compute_flux(struct UpdateStruct update)
 {
-    for (int i = 0; i < update.num_zones + 1; ++i)
+    int ni = update.ni;
+    int nj = update.nj;
+
+    for (int i = 0; i < ni + 1; ++i)
     {
-        int il = i - 1;
-        int ir = i;
+        for (int j = 0; j < nj; ++j)
+        {
+            int il = i - 1;
+            int ir = i;
 
-        if (il == -1)
-            il += 1;
+            if (il == -1)
+                il += 1;
 
-        if (ir == update.num_zones)
-            ir -= 1;
+            if (ir == ni)
+                ir -= 1;
 
-        const real *pl = &update.primitive[4 * il];
-        const real *pr = &update.primitive[4 * ir];
-        real *flux = &update.flux[4 * i];
-        riemann_hlle(pl, pr, flux, 0);
+            const real *pl = &update.primitive[4 * (il * nj + j)];
+            const real *pr = &update.primitive[4 * (ir * nj + j)];
+
+            real *flux = &update.flux_i[4 * (i * nj + j)];
+            riemann_hlle(pl, pr, flux, 0);
+        }
+    }
+
+    for (int i = 0; i < ni; ++i)
+    {
+        for (int j = 0; j < nj + 1; ++j)
+        {
+            int jl = j - 1;
+            int jr = j;
+
+            if (jl == -1)
+                jl += 1;
+
+            if (jr == nj)
+                jr -= 1;
+
+            const real *pl = &update.primitive[4 * (i * nj + jl)];
+            const real *pr = &update.primitive[4 * (i * nj + jr)];
+
+            real *flux = &update.flux_j[4 * (i * nj + j)];
+            riemann_hlle(pl, pr, flux, 1);
+        }
     }
 }
 
 void update_struct_do_advance_cons(struct UpdateStruct update, real dt)
 {
-    for (int i = 0; i < update.num_zones; ++i)
-    {
-        const real dx = (update.x1 - update.x0) / update.num_zones;
-        const real *fl = &update.flux[4 * (i + 0)];
-        const real *fr = &update.flux[4 * (i + 1)];
-        real *cons = &update.conserved[4 * i];
-        real *prim = &update.primitive[4 * i];
+    int ni = update.ni;
+    int nj = update.nj;
+    const real dx = (update.x1 - update.x0) / update.ni;
+    const real dy = (update.y1 - update.y0) / update.nj;
 
-        for (int q = 0; q < 4; ++q)
+    for (int i = 0; i < ni; ++i)
+    {
+        for (int j = 0; j < nj; ++j)
         {
-            cons[q] -= (fr[q] - fl[q]) * dt / dx;
+            const real *fli = &update.flux_i[4 * ((i + 0) * nj + j)];
+            const real *fri = &update.flux_i[4 * ((i + 1) * nj + j)];
+            const real *flj = &update.flux_j[4 * (i * nj + (j + 0))];
+            const real *frj = &update.flux_j[4 * (i * nj + (j + 1))];
+
+            real *cons = &update.conserved[4 * (i * nj + j)];
+            real *prim = &update.primitive[4 * (i * nj + j)];
+
+            for (int q = 0; q < 4; ++q)
+            {
+                cons[q] -= ((fri[q] - fli[q]) / dx + (frj[q] - flj[q]) / dy) * dt;
+            }
+            conserved_to_primitive(cons, prim);
         }
-        conserved_to_primitive(cons, prim);
     }
 }
 
 int main()
 {
-    const int num_zones = 1 << 20;
+    const int ni = 1024;
+    const int nj = 1024;
     const int fold = 10;
     const real x0 = 0.0;
     const real x1 = 1.0;
-    const real dx = (x1 - x0) / num_zones;
+    const real y0 = 0.0;
+    const real y1 = 1.0;
+    const real dx = (x1 - x0) / ni;
+    const real dy = (y1 - y0) / nj;
 
-    real *primitive = (real*) malloc(num_zones * 4 * sizeof(real));
-    struct UpdateStruct update = update_struct_new(num_zones, x0, x1);
+    real *primitive = (real*) malloc(ni * nj * 4 * sizeof(real));
+    struct UpdateStruct update = update_struct_new(ni, nj, x0, x1, y0, y1);
 
-    initial_primitive(primitive, num_zones, x0, x1);
+    initial_primitive(primitive, ni, nj, x0, x1, y0, y1);
     update_struct_set_primitive(update, primitive);
 
     int iteration = 0;
     real time = 0.0;
-    real dt = dx * 0.1;
+    real dt = min2(dx, dy) * 0.05;
 
     while (time < 0.1)
     {
@@ -277,23 +343,26 @@ int main()
         clock_t end = clock();
 
         real seconds = ((real) (end - start)) / CLOCKS_PER_SEC;
-        real mzps = (num_zones / 1e6) / seconds * fold;
+        real mzps = (ni * nj / 1e6) / seconds * fold;
         printf("[%d] t=%.3e Mzps=%.2f\n", iteration, time, mzps);
     }
 
     update_struct_get_primitive(update, primitive);
     update_struct_del(update);
 
-    FILE* outfile = fopen("euler1d.dat", "w");
+    FILE* outfile = fopen("euler2d.dat", "w");
 
-    for (int i = 0; i < num_zones; ++i)
+    for (int i = 0; i < ni; ++i)
     {
-        real *prim = &primitive[i * 4];
-        real x = (i + 0.5) * dx;
-        fprintf(outfile, "%f %f %f %f\n", x, prim[0], prim[1], prim[3]);
+        for (int j = 0; j < nj; ++j)
+        {
+            real *prim = &primitive[4 * (i * nj + j)];
+            real x = (i + 0.5) * dx;
+            real y = (j + 0.5) * dy;
+            fprintf(outfile, "%f %f %f %f %f %f\n", x, y, prim[0], prim[1], prim[2], prim[3]);
+        }
     }
     fclose(outfile);
     free(primitive);
-
     return 0;
 }
