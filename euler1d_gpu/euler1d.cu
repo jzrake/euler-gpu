@@ -240,7 +240,7 @@ __global__ void update_struct_do_advance_cons(UpdateStruct update, real dt)
 
 int main()
 {
-    const int num_zones = 1 << 16;
+    const int num_zones = 1 << 20;
     const int block_size = 32;
     const int fold = 100;
     const real x0 = 0.0;
