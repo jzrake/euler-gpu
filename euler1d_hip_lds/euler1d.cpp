@@ -247,6 +247,7 @@ __global__ void update_struct_do_advance_cons(UpdateStruct update, real dt)
             shared_prim[4 * i_m + q] = update.primitive[4 * i_read_g + q];
         }
     }
+
     int i_m = threadIdx.x + 1;
 
     for (int q = 0; q < 4; ++q)
@@ -259,14 +260,10 @@ __global__ void update_struct_do_advance_cons(UpdateStruct update, real dt)
     real *pc = &shared_prim[4 * (i_m + 0)];
     real *pr = &shared_prim[4 * (i_m + 1)];
 
-    real uc[4];
     real fl[4];
     real fr[4];
+    real *uc = &update.conserved[4 * i_g];
 
-    for (int q = 0; q < 4; ++q)
-    {
-        uc[q] = update.conserved[4 * i_g + q];
-    }
     riemann_hlle(pl, pc, fl, 0);
     riemann_hlle(pc, pr, fr, 0);
 
@@ -281,13 +278,12 @@ __global__ void update_struct_do_advance_cons(UpdateStruct update, real dt)
     for (int q = 0; q < 4; ++q)
     {
         update.primitive[4 * i_g + q] = pc[q];
-        update.conserved[4 * i_g + q] = uc[q];
     }
 }
 
 int main()
 {
-    const int num_zones = 1 << 20;
+    const int num_zones = 1 << 24;
     const int block_size = 64;
     const int shared_memory = (block_size + 2) * 4 * sizeof(real);
     const int fold = 100;
@@ -314,8 +310,8 @@ int main()
             update_struct_do_advance_cons<<<num_zones / block_size, block_size, shared_memory>>>(update, dt);
             time += dt;
             iteration += 1;
-            hipDeviceSynchronize();
         }
+        hipDeviceSynchronize();
         clock_t end = clock();
 
         real seconds = ((real) (end - start)) / CLOCKS_PER_SEC;

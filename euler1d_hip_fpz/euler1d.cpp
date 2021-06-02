@@ -233,7 +233,7 @@ __global__ void update_struct_do_advance_cons(UpdateStruct update, real dt)
 
 int main()
 {
-    const int num_zones = 1 << 20;
+    const int num_zones = 1 << 24;
     const int block_size = 64;
     const int fold = 100;
     const real x0 = 0.0;
@@ -259,8 +259,8 @@ int main()
             update_struct_do_advance_cons<<<num_zones / block_size, block_size>>>(update, dt);
             time += dt;
             iteration += 1;
-            hipDeviceSynchronize();
         }
+        hipDeviceSynchronize();
         clock_t end = clock();
 
         real seconds = ((real) (end - start)) / CLOCKS_PER_SEC;
