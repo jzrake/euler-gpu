@@ -205,56 +205,42 @@ __global__ void update_struct_do_advance_cons(UpdateStruct update, real dt)
     int i0_g = (blockIdx.x + 0) * blockDim.x;
     int i1_g = (blockIdx.x + 1) * blockDim.x;
 
+    int num_guard = 1;
+
     // This block of memory spans the global indexes in the range
     // i0_g - 1 .. i1_g + 1. It has blockDim.x + 2 elements.
     extern __shared__ real shared_prim[];
 
-    // Indexes ending with _g refer to the global array. _l refers to the
-    // local thread block. _m refers to the shared memory block.
-
-    // If we are the first thread in the block, then load the left guard zone
-    // into shared memory, at memory index i_m = 0.
-    // 
-    // If we are the last thread in the block, then load the right guard zone
-    // into shared memory, at memory index i_m = blockDim.x + 1.
-    //
-    // Whoever we are, load from global index i_g into shared memory at index
-    // i_m = threadIdx.x + 1.
-
-    if (threadIdx.x == 0)
+    // Cyclic indexing technique:
+    if (true)
     {
-        int i_m = 0;
-        int i_read_g = i0_g - 1;
+        int im_g = threadIdx.x + i0_g - num_guard;
+        int im_l = threadIdx.x;
 
-        if (i_read_g == -1)
-            i_read_g = 0;
+        if (im_g < 0)
+            im_g = 0;
 
         for (int q = 0; q < 4; ++q)
         {
-            shared_prim[4 * i_m + q] = update.primitive[4 * i_read_g + q];
+            shared_prim[4 * im_l + q] = update.primitive[4 * im_g + q];
         }
     }
-    if (threadIdx.x == blockDim.x - 1)
+    if (threadIdx.x < 2 * num_guard)
     {
-        int i_m = blockDim.x + 1;
-        int i_read_g = i1_g;
+        int im_g = threadIdx.x + blockDim.x + i0_g - num_guard;
+        int im_l = threadIdx.x + blockDim.x;
 
-        if (i_read_g == update.num_zones)
-            i_read_g = update.num_zones - 1;
+        if (im_g >= update.num_zones)
+            im_g = update.num_zones - 1;
 
         for (int q = 0; q < 4; ++q)
         {
-            shared_prim[4 * i_m + q] = update.primitive[4 * i_read_g + q];
+            shared_prim[4 * im_l + q] = update.primitive[4 * im_g + q];
         }
-    }
-
-    int i_m = threadIdx.x + 1;
-
-    for (int q = 0; q < 4; ++q)
-    {
-        shared_prim[4 * i_m + q] = update.primitive[4 * i_g + q];
     }
     __syncthreads();
+
+    int i_m = threadIdx.x + 1;
 
     real *pl = &shared_prim[4 * (i_m - 1)];
     real *pc = &shared_prim[4 * (i_m + 0)];
