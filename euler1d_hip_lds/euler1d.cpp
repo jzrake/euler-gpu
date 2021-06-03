@@ -212,7 +212,6 @@ __global__ void update_struct_do_advance_cons(UpdateStruct update, real dt)
     extern __shared__ real shared_prim[];
 
     // Cyclic indexing technique:
-    if (true)
     {
         int im_g = threadIdx.x + i0_g - num_guard;
         int im_l = threadIdx.x;
