@@ -267,93 +267,35 @@ __global__ void update_struct_do_advance_cons(struct UpdateStruct update, real d
         return;
     }
 
+    for (int i_block = 0; i_block < 2; ++i_block)
     {
-        int i_lm = i_lt;
-        int j_lm = j_lt;
-        int i_gm = i_gt - num_guard;
-        int j_gm = j_gt - num_guard;
-
-        if (i_gm < 0)
-            i_gm = 0;
-        if (j_gm < 0)
-            j_gm = 0;
-        if (i_gm == update.ni)
-            i_gm = update.ni - 1;
-        if (j_gm == update.nj)
-            j_gm = update.nj - 1;
-
-        for (int q = 0; q < 4; ++q)
+        for (int j_block = 0; j_block < 2; ++j_block)
         {
-            shared_prim     [i_lm * si_lm + j_lm * sj_lm + q] =
-            update.primitive[i_gm * si_gm + j_gm * sj_gm + q];
+            int i_lm = i_lt + ni_lt * i_block;
+            int j_lm = j_lt + nj_lt * j_block;
+            int i_gm = i_gt + ni_lt * i_block - num_guard;
+            int j_gm = j_gt + nj_lt * j_block - num_guard;
+
+            if (i_gm < 0)
+                i_gm = 0;
+            if (j_gm < 0)
+                j_gm = 0;
+            if (i_gm == update.ni)
+                i_gm = update.ni - 1;
+            if (j_gm == update.nj)
+                j_gm = update.nj - 1;
+
+            if (i_lm < ni_lm && j_lm < nj_lm)
+            {
+                for (int q = 0; q < 4; ++q)
+                {
+                    shared_prim     [i_lm * si_lm + j_lm * sj_lm + q] =
+                    update.primitive[i_gm * si_gm + j_gm * sj_gm + q];
+                }                
+            }
         }
     }
-    if (i_lt < 2 * num_guard)
-    {
-        int i_lm = i_lt + ni_lt;
-        int j_lm = j_lt;
-        int i_gm = i_gt - num_guard + ni_lt;
-        int j_gm = j_gt - num_guard;
 
-        if (i_gm < 0)
-            i_gm = 0;
-        if (j_gm < 0)
-            j_gm = 0;
-        if (i_gm == update.ni)
-            i_gm = update.ni - 1;
-        if (j_gm == update.nj)
-            j_gm = update.nj - 1;
-
-        for (int q = 0; q < 4; ++q)
-        {
-            shared_prim     [i_lm * si_lm + j_lm * sj_lm + q] =
-            update.primitive[i_gm * si_gm + j_gm * sj_gm + q];
-        }
-    }
-    if (j_lt < 2 * num_guard)
-    {
-        int i_lm = i_lt;
-        int j_lm = j_lt + nj_lt;
-        int i_gm = i_gt - num_guard;
-        int j_gm = j_gt - num_guard + nj_lt;
-
-        if (i_gm < 0)
-            i_gm = 0;
-        if (j_gm < 0)
-            j_gm = 0;
-        if (i_gm == update.ni)
-            i_gm = update.ni - 1;
-        if (j_gm == update.nj)
-            j_gm = update.nj - 1;
-
-        for (int q = 0; q < 4; ++q)
-        {
-            shared_prim     [i_lm * si_lm + j_lm * sj_lm + q] =
-            update.primitive[i_gm * si_gm + j_gm * sj_gm + q];
-        }
-    }
-    if (i_lt < 2 * num_guard && j_lt < 2 * num_guard)
-    {
-        int i_lm = i_lt + ni_lt;
-        int j_lm = j_lt + nj_lt;
-        int i_gm = i_gt - num_guard + ni_lt;
-        int j_gm = j_gt - num_guard + nj_lt;
-
-        if (i_gm < 0)
-            i_gm = 0;
-        if (j_gm < 0)
-            j_gm = 0;
-        if (i_gm == update.ni)
-            i_gm = update.ni - 1;
-        if (j_gm == update.nj)
-            j_gm = update.nj - 1;
-
-        for (int q = 0; q < 4; ++q)
-        {
-            shared_prim     [i_lm * si_lm + j_lm * sj_lm + q] =
-            update.primitive[i_gm * si_gm + j_gm * sj_gm + q];
-        }
-    }
     __syncthreads();
 
     int i_gm = i_gt;
