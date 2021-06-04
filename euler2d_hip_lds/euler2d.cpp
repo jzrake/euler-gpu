@@ -230,85 +230,148 @@ void update_struct_get_primitive(struct UpdateStruct update, real *primitive_hos
 
 __global__ void update_struct_do_advance_cons(struct UpdateStruct update, real dt)
 {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    int j = blockIdx.y * blockDim.y + threadIdx.y;
-    int ni = update.ni;
-    int nj = update.nj;
     const real dx = (update.x1 - update.x0) / update.ni;
     const real dy = (update.y1 - update.y0) / update.nj;
+    int num_guard = 1;
 
-    if (i >= ni || j >= nj)
+    extern __shared__ real shared_prim[];
+
+    // Have four index spaces:
+    //
+    // - lt: local thread index (in-block)
+    // - gt: global thread index
+    // - gm: global memory index
+    // - lm: lds memory index
+
+    int ni_lt = blockDim.x;
+    int nj_lt = blockDim.y;
+    int ni_gt = gridDim.x * blockDim.x;
+    int nj_gt = gridDim.y * blockDim.y;
+    int ni_gm = update.ni;
+    int nj_gm = update.nj;
+    int ni_lm = blockDim.x + 2 * num_guard;
+    int nj_lm = blockDim.y + 2 * num_guard;
+
+    int si_gm = 4 * nj_gm;
+    int sj_gm = 4;
+    int si_lm = 4 * nj_lm;
+    int sj_lm = 4;
+
+    int i_lt = threadIdx.x;
+    int j_lt = threadIdx.y;
+    int i_gt = threadIdx.x + blockIdx.x * blockDim.x;
+    int j_gt = threadIdx.y + blockIdx.y * blockDim.y;
+
+    if (i_gt >= update.ni || j_gt >= update.nj)
     {
         return;
     }
 
-    int i0_g = (blockIdx.x + 0) * blockDim.x;
-    int i1_g = (blockIdx.x + 1) * blockDim.x;
-    int j0_g = (blockIdx.y + 0) * blockDim.y;
-    int j1_g = (blockIdx.y + 1) * blockDim.y;
-
-    // strides in global memory
-    int ti = 4 * update.nj;
-    int tj = 4 * 1;
-
-    // strides in shared memory
-    int si = 4 * blockDim.y;
-    int sj = 4 * 1;
-
-    int num_guard = 1;
-    extern __shared__ real shared_prim[];
-
     {
-        int im_g = threadIdx.x + i0_g - num_guard;
-        int im_l = threadIdx.x;
-        int jm_g = threadIdx.y + j0_g - num_guard;
-        int jm_l = threadIdx.y;
+        int i_lm = i_lt;
+        int j_lm = j_lt;
+        int i_gm = i_gt - num_guard;
+        int j_gm = j_gt - num_guard;
 
-        if (im_g < 0)
-            im_g = 0;
-        if (jm_g < 0)
-            jm_g = 0;
+        if (i_gm < 0)
+            i_gm = 0;
+        if (j_gm < 0)
+            j_gm = 0;
+        if (i_gm == update.ni)
+            i_gm = update.ni - 1;
+        if (j_gm == update.nj)
+            j_gm = update.nj - 1;
 
         for (int q = 0; q < 4; ++q)
         {
-            shared_prim     [im_l * si + jm_l * sj + q] =
-            update.primitive[im_g * ti + jm_g * tj + q];
+            shared_prim     [i_lm * si_lm + j_lm * sj_lm + q] =
+            update.primitive[i_gm * si_gm + j_gm * sj_gm + q];
         }
     }
-    if (threadIdx.x < 2 * num_guard || threadIdx.y < 2 * num_guard)
+    if (i_lt < 2 * num_guard)
     {
-        int im_g = threadIdx.x + blockDim.x + i0_g - num_guard;
-        int im_l = threadIdx.x + blockDim.x;
-        int jm_g = threadIdx.y + blockDim.y + j0_g - num_guard;
-        int jm_l = threadIdx.y + blockDim.y;
+        int i_lm = i_lt + ni_lt;
+        int j_lm = j_lt;
+        int i_gm = i_gt - num_guard + ni_lt;
+        int j_gm = j_gt - num_guard;
 
-        if (im_g >= update.ni)
-            im_g = update.ni - 1;
-        if (jm_g >= update.nj)
-            jm_g = update.nj - 1;
+        if (i_gm < 0)
+            i_gm = 0;
+        if (j_gm < 0)
+            j_gm = 0;
+        if (i_gm == update.ni)
+            i_gm = update.ni - 1;
+        if (j_gm == update.nj)
+            j_gm = update.nj - 1;
 
         for (int q = 0; q < 4; ++q)
         {
-            shared_prim     [im_l * si + jm_l * sj + q] =
-            update.primitive[im_g * ti + jm_g * tj + q];
+            shared_prim     [i_lm * si_lm + j_lm * sj_lm + q] =
+            update.primitive[i_gm * si_gm + j_gm * sj_gm + q];
+        }
+    }
+    if (j_lt < 2 * num_guard)
+    {
+        int i_lm = i_lt;
+        int j_lm = j_lt + nj_lt;
+        int i_gm = i_gt - num_guard;
+        int j_gm = j_gt - num_guard + nj_lt;
+
+        if (i_gm < 0)
+            i_gm = 0;
+        if (j_gm < 0)
+            j_gm = 0;
+        if (i_gm == update.ni)
+            i_gm = update.ni - 1;
+        if (j_gm == update.nj)
+            j_gm = update.nj - 1;
+
+        for (int q = 0; q < 4; ++q)
+        {
+            shared_prim     [i_lm * si_lm + j_lm * sj_lm + q] =
+            update.primitive[i_gm * si_gm + j_gm * sj_gm + q];
+        }
+    }
+    if (i_lt < 2 * num_guard && j_lt < 2 * num_guard)
+    {
+        int i_lm = i_lt + ni_lt;
+        int j_lm = j_lt + nj_lt;
+        int i_gm = i_gt - num_guard + ni_lt;
+        int j_gm = j_gt - num_guard + nj_lt;
+
+        if (i_gm < 0)
+            i_gm = 0;
+        if (j_gm < 0)
+            j_gm = 0;
+        if (i_gm == update.ni)
+            i_gm = update.ni - 1;
+        if (j_gm == update.nj)
+            j_gm = update.nj - 1;
+
+        for (int q = 0; q < 4; ++q)
+        {
+            shared_prim     [i_lm * si_lm + j_lm * sj_lm + q] =
+            update.primitive[i_gm * si_gm + j_gm * sj_gm + q];
         }
     }
     __syncthreads();
 
-    int im = threadIdx.x + 1;
-    int jm = threadIdx.y + 1;
+    int i_gm = i_gt;
+    int j_gm = j_gt;
+    int i_lm = i_lt + num_guard;
+    int j_lm = j_lt + num_guard;
 
-    int il = im - 1;
-    int ir = im + 1;
-    int jl = jm - 1;
-    int jr = jm + 1;
+    int il = i_lm - 1;
+    int ir = i_lm + 1;
+    int jl = j_lm - 1;
+    int jr = j_lm + 1;
 
-    const real *pli = &shared_prim[il * si + jm * sj];
-    const real *pri = &shared_prim[ir * si + jm * sj];
-    const real *plj = &shared_prim[im * si + jl * sj];
-    const real *prj = &shared_prim[im * si + jr * sj];
-    real *prim = &shared_prim[im * si + jm * sj];
-    real *cons = &update.conserved[i * ti + j * tj];
+    const real *pli = &shared_prim[il * si_lm + j_lm * sj_lm];
+    const real *pri = &shared_prim[ir * si_lm + j_lm * sj_lm];
+    const real *plj = &shared_prim[i_lm * si_lm + jl * sj_lm];
+    const real *prj = &shared_prim[i_lm * si_lm + jr * sj_lm];
+    real *prim = &shared_prim     [i_lm * si_lm + j_lm * sj_lm];
+    real *cons = &update.conserved[i_gm * si_gm + j_gm * sj_gm];
 
     real fli[4];
     real fri[4];
@@ -327,7 +390,7 @@ __global__ void update_struct_do_advance_cons(struct UpdateStruct update, real d
 
     for (int q = 0; q < 4; ++q)
     {
-        update.primitive[i * ti + j * tj + q] = prim[q];
+        update.primitive[i_gm * si_gm + j_gm * sj_gm + q] = prim[q];
     }
 }
 
