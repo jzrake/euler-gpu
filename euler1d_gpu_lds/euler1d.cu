@@ -138,7 +138,6 @@ struct UpdateStruct
     real x1;
     real *primitive;
     real *conserved;
-    real *flux;
 };
 
 struct UpdateStruct update_struct_new(int num_zones, real x0, real x1)
@@ -150,7 +149,6 @@ struct UpdateStruct update_struct_new(int num_zones, real x0, real x1)
 
     cudaMalloc(&update.primitive, num_zones * 4 * sizeof(real));
     cudaMalloc(&update.conserved, num_zones * 4 * sizeof(real));
-    cudaMalloc(&update.flux, (num_zones + 1) * 4 * sizeof(real));
 
     return update;
 }
@@ -159,7 +157,6 @@ void update_struct_del(struct UpdateStruct update)
 {
     cudaFree(update.primitive);
     cudaFree(update.conserved);
-    cudaFree(update.flux);
 }
 
 void update_struct_set_primitive(struct UpdateStruct update, const real *primitive_host)
@@ -198,50 +195,81 @@ void update_struct_get_primitive(struct UpdateStruct update, real *primitive_hos
     );
 }
 
-__global__ void update_struct_do_compute_flux(UpdateStruct update)
-{
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= update.num_zones + 1)
-        return;
-
-    int il = i - 1;
-    int ir = i;
-
-    if (il == -1)
-        il += 1;
-
-    if (ir == update.num_zones)
-        ir -= 1;
-
-    const real *pl = &update.primitive[4 * il];
-    const real *pr = &update.primitive[4 * ir];
-    real *flux = &update.flux[4 * i];
-    riemann_hlle(pl, pr, flux, 0);
-}
-
 __global__ void update_struct_do_advance_cons(UpdateStruct update, real dt)
 {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= update.num_zones)
+    int i_g = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i_g >= update.num_zones)
         return;
 
+    int i0_g = (blockIdx.x + 0) * blockDim.x;
+    // int i1_g = (blockIdx.x + 1) * blockDim.x;
+
+    int num_guard = 1;
+
+    // This block of memory spans the global indexes in the range
+    // i0_g - 1 .. i1_g + 1. It has blockDim.x + 2 elements.
+    extern __shared__ real shared_prim[];
+
+    // Cyclic indexing technique:
+    {
+        int im_g = threadIdx.x + i0_g - num_guard;
+        int im_l = threadIdx.x;
+
+        if (im_g < 0)
+            im_g = 0;
+
+        for (int q = 0; q < 4; ++q)
+        {
+            shared_prim[4 * im_l + q] = update.primitive[4 * im_g + q];
+        }
+    }
+    if (threadIdx.x < 2 * num_guard)
+    {
+        int im_g = threadIdx.x + blockDim.x + i0_g - num_guard;
+        int im_l = threadIdx.x + blockDim.x;
+
+        if (im_g >= update.num_zones)
+            im_g = update.num_zones - 1;
+
+        for (int q = 0; q < 4; ++q)
+        {
+            shared_prim[4 * im_l + q] = update.primitive[4 * im_g + q];
+        }
+    }
+    __syncthreads();
+
+    int i_m = threadIdx.x + 1;
+
+    real *pl = &shared_prim[4 * (i_m - 1)];
+    real *pc = &shared_prim[4 * (i_m + 0)];
+    real *pr = &shared_prim[4 * (i_m + 1)];
+
+    real fl[4];
+    real fr[4];
+    real *uc = &update.conserved[4 * i_g];
+
+    riemann_hlle(pl, pc, fl, 0);
+    riemann_hlle(pc, pr, fr, 0);
+
     const real dx = (update.x1 - update.x0) / update.num_zones;
-    const real *fl = &update.flux[4 * (i + 0)];
-    const real *fr = &update.flux[4 * (i + 1)];
-    real *cons = &update.conserved[4 * i];
-    real *prim = &update.primitive[4 * i];
 
     for (int q = 0; q < 4; ++q)
     {
-        cons[q] -= (fr[q] - fl[q]) * dt / dx;
+        uc[q] -= (fr[q] - fl[q]) * dt / dx;
     }
-    conserved_to_primitive(cons, prim);
+    conserved_to_primitive(uc, pc);
+
+    for (int q = 0; q < 4; ++q)
+    {
+        update.primitive[4 * i_g + q] = pc[q];
+    }
 }
 
 int main()
 {
     const int num_zones = 1 << 24;
     const int block_size = 64;
+    const int shared_memory = (block_size + 2) * 4 * sizeof(real);
     const int fold = 100;
     const real x0 = 0.0;
     const real x1 = 1.0;
@@ -263,9 +291,7 @@ int main()
 
         for (int i = 0; i < fold; ++i)
         {
-            update_struct_do_compute_flux<<<num_zones / block_size + 1, block_size>>>(update);
-            update_struct_do_advance_cons<<<num_zones / block_size + 0, block_size>>>(update, dt);
-
+            update_struct_do_advance_cons<<<num_zones / block_size, block_size, shared_memory>>>(update, dt);
             time += dt;
             iteration += 1;
         }

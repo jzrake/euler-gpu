@@ -138,7 +138,6 @@ struct UpdateStruct
     real x1;
     real *primitive;
     real *conserved;
-    real *flux;
 };
 
 struct UpdateStruct update_struct_new(int num_zones, real x0, real x1)
@@ -150,7 +149,6 @@ struct UpdateStruct update_struct_new(int num_zones, real x0, real x1)
 
     cudaMalloc(&update.primitive, num_zones * 4 * sizeof(real));
     cudaMalloc(&update.conserved, num_zones * 4 * sizeof(real));
-    cudaMalloc(&update.flux, (num_zones + 1) * 4 * sizeof(real));
 
     return update;
 }
@@ -159,7 +157,6 @@ void update_struct_del(struct UpdateStruct update)
 {
     cudaFree(update.primitive);
     cudaFree(update.conserved);
-    cudaFree(update.flux);
 }
 
 void update_struct_set_primitive(struct UpdateStruct update, const real *primitive_host)
@@ -198,14 +195,15 @@ void update_struct_get_primitive(struct UpdateStruct update, real *primitive_hos
     );
 }
 
-__global__ void update_struct_do_compute_flux(UpdateStruct update)
+__global__ void update_struct_do_advance_cons(UpdateStruct update, real dt)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= update.num_zones + 1)
+    if (i >= update.num_zones)
         return;
 
     int il = i - 1;
-    int ir = i;
+    int ic = i;
+    int ir = i + 1;
 
     if (il == -1)
         il += 1;
@@ -213,29 +211,23 @@ __global__ void update_struct_do_compute_flux(UpdateStruct update)
     if (ir == update.num_zones)
         ir -= 1;
 
-    const real *pl = &update.primitive[4 * il];
-    const real *pr = &update.primitive[4 * ir];
-    real *flux = &update.flux[4 * i];
-    riemann_hlle(pl, pr, flux, 0);
-}
-
-__global__ void update_struct_do_advance_cons(UpdateStruct update, real dt)
-{
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= update.num_zones)
-        return;
-
     const real dx = (update.x1 - update.x0) / update.num_zones;
-    const real *fl = &update.flux[4 * (i + 0)];
-    const real *fr = &update.flux[4 * (i + 1)];
-    real *cons = &update.conserved[4 * i];
-    real *prim = &update.primitive[4 * i];
+    real *pl = &update.primitive[4 * il];
+    real *pc = &update.primitive[4 * ic];
+    real *pr = &update.primitive[4 * ir];
+
+    real fl[4];
+    real fr[4];
+    riemann_hlle(pl, pc, fl, 0);
+    riemann_hlle(pc, pr, fr, 0);
+
+    real *cons = &update.conserved[4 * ic];
 
     for (int q = 0; q < 4; ++q)
     {
         cons[q] -= (fr[q] - fl[q]) * dt / dx;
     }
-    conserved_to_primitive(cons, prim);
+    conserved_to_primitive(cons, pc);
 }
 
 int main()
@@ -263,9 +255,7 @@ int main()
 
         for (int i = 0; i < fold; ++i)
         {
-            update_struct_do_compute_flux<<<num_zones / block_size + 1, block_size>>>(update);
-            update_struct_do_advance_cons<<<num_zones / block_size + 0, block_size>>>(update, dt);
-
+            update_struct_do_advance_cons<<<num_zones / block_size, block_size>>>(update, dt);
             time += dt;
             iteration += 1;
         }

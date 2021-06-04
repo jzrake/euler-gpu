@@ -160,8 +160,6 @@ struct UpdateStruct
     real y1;
     real *primitive;
     real *conserved;
-    real *flux_i;
-    real *flux_j;
 };
 
 struct UpdateStruct update_struct_new(int ni, int nj, real x0, real x1, real y0, real y1)
@@ -176,8 +174,6 @@ struct UpdateStruct update_struct_new(int ni, int nj, real x0, real x1, real y0,
 
     cudaMalloc(&update.primitive, ni * nj * 4 * sizeof(real));
     cudaMalloc(&update.conserved, ni * nj * 4 * sizeof(real));
-    cudaMalloc(&update.flux_i, (ni + 1) * nj * 4 * sizeof(real));
-    cudaMalloc(&update.flux_j, ni * (nj + 1) * 4 * sizeof(real));
 
     return update;
 }
@@ -186,8 +182,6 @@ void update_struct_del(struct UpdateStruct update)
 {
     cudaFree(update.primitive);
     cudaFree(update.conserved);
-    cudaFree(update.flux_i);
-    cudaFree(update.flux_j);
 }
 
 void update_struct_set_primitive(struct UpdateStruct update, const real *primitive_host)
@@ -233,74 +227,110 @@ void update_struct_get_primitive(struct UpdateStruct update, real *primitive_hos
     );
 }
 
-__global__ void update_struct_do_compute_flux(struct UpdateStruct update)
-{
-    int ni = update.ni;
-    int nj = update.nj;
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    int j = blockIdx.y * blockDim.y + threadIdx.y;
-
-    if (i < ni + 1 && j < nj)
-    {
-        int il = i - 1;
-        int ir = i;
-
-        if (il == -1)
-            il += 1;
-
-        if (ir == ni)
-            ir -= 1;
-
-        const real *pl = &update.primitive[4 * (il * nj + j)];
-        const real *pr = &update.primitive[4 * (ir * nj + j)];
-
-        real *flux = &update.flux_i[4 * (i * nj + j)];
-        riemann_hlle(pl, pr, flux, 0);
-    }
-
-    if (j < nj + 1 && i < ni)
-    {
-        int jl = j - 1;
-        int jr = j;
-
-        if (jl == -1)
-            jl += 1;
-
-        if (jr == nj)
-            jr -= 1;
-
-        const real *pl = &update.primitive[4 * (i * nj + jl)];
-        const real *pr = &update.primitive[4 * (i * nj + jr)];
-
-        real *flux = &update.flux_j[4 * (i * nj + j)];
-        riemann_hlle(pl, pr, flux, 1);
-    }
-}
-
 __global__ void update_struct_do_advance_cons(struct UpdateStruct update, real dt)
 {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    int j = blockIdx.y * blockDim.y + threadIdx.y;
-    int ni = update.ni;
-    int nj = update.nj;
     const real dx = (update.x1 - update.x0) / update.ni;
     const real dy = (update.y1 - update.y0) / update.nj;
+    int num_guard = 1;
 
-    if (i < ni && j < nj)
+    extern __shared__ real shared_prim[];
+
+    // Have four index spaces:
+    //
+    // - lt: local thread index (in-block)
+    // - gt: global thread index
+    // - gm: global memory index
+    // - lm: lds memory index
+
+    int ni_lt = blockDim.x;
+    int nj_lt = blockDim.y;
+    // int ni_gt = gridDim.x * blockDim.x;
+    // int nj_gt = gridDim.y * blockDim.y;
+    // int ni_gm = update.ni;
+    int nj_gm = update.nj;
+    int ni_lm = blockDim.x + 2 * num_guard;
+    int nj_lm = blockDim.y + 2 * num_guard;
+
+    int si_gm = 4 * nj_gm;
+    int sj_gm = 4;
+    int si_lm = 4 * nj_lm;
+    int sj_lm = 4;
+
+    int i_lt = threadIdx.x;
+    int j_lt = threadIdx.y;
+    int i_gt = threadIdx.x + blockIdx.x * blockDim.x;
+    int j_gt = threadIdx.y + blockIdx.y * blockDim.y;
+
+    if (i_gt >= update.ni || j_gt >= update.nj)
     {
-        const real *fli = &update.flux_i[4 * ((i + 0) * nj + j)];
-        const real *fri = &update.flux_i[4 * ((i + 1) * nj + j)];
-        const real *flj = &update.flux_j[4 * (i * nj + (j + 0))];
-        const real *frj = &update.flux_j[4 * (i * nj + (j + 1))];
+        return;
+    }
 
-        real *cons = &update.conserved[4 * (i * nj + j)];
-        real *prim = &update.primitive[4 * (i * nj + j)];
-
-        for (int q = 0; q < 4; ++q)
+    for (int i_block = 0; i_block < 2; ++i_block)
+    {
+        for (int j_block = 0; j_block < 2; ++j_block)
         {
-            cons[q] -= ((fri[q] - fli[q]) / dx + (frj[q] - flj[q]) / dy) * dt;
+            int i_lm = i_lt + ni_lt * i_block;
+            int j_lm = j_lt + nj_lt * j_block;
+            int i_gm = i_gt + ni_lt * i_block - num_guard;
+            int j_gm = j_gt + nj_lt * j_block - num_guard;
+
+            if (i_gm < 0)
+                i_gm = 0;
+            if (j_gm < 0)
+                j_gm = 0;
+            if (i_gm == update.ni)
+                i_gm = update.ni - 1;
+            if (j_gm == update.nj)
+                j_gm = update.nj - 1;
+
+            if (i_lm < ni_lm && j_lm < nj_lm)
+            {
+                for (int q = 0; q < 4; ++q)
+                {
+                    shared_prim     [i_lm * si_lm + j_lm * sj_lm + q] =
+                    update.primitive[i_gm * si_gm + j_gm * sj_gm + q];
+                }                
+            }
         }
-        conserved_to_primitive(cons, prim);
+    }
+    __syncthreads();
+
+    int i_gm = i_gt;
+    int j_gm = j_gt;
+    int i_lm = i_lt + num_guard;
+    int j_lm = j_lt + num_guard;
+
+    int il = i_lm - 1;
+    int ir = i_lm + 1;
+    int jl = j_lm - 1;
+    int jr = j_lm + 1;
+
+    const real *pli = &shared_prim[il * si_lm + j_lm * sj_lm];
+    const real *pri = &shared_prim[ir * si_lm + j_lm * sj_lm];
+    const real *plj = &shared_prim[i_lm * si_lm + jl * sj_lm];
+    const real *prj = &shared_prim[i_lm * si_lm + jr * sj_lm];
+    real *prim = &shared_prim     [i_lm * si_lm + j_lm * sj_lm];
+    real *cons = &update.conserved[i_gm * si_gm + j_gm * sj_gm];
+
+    real fli[4];
+    real fri[4];
+    real flj[4];
+    real frj[4];
+    riemann_hlle(pli, prim, fli, 0);
+    riemann_hlle(prim, pri, fri, 0);
+    riemann_hlle(plj, prim, flj, 1);
+    riemann_hlle(prim, prj, frj, 1);
+
+    for (int q = 0; q < 4; ++q)
+    {
+        cons[q] -= ((fri[q] - fli[q]) / dx + (frj[q] - flj[q]) / dy) * dt;
+    }
+    conserved_to_primitive(cons, prim);
+
+    for (int q = 0; q < 4; ++q)
+    {
+        update.primitive[i_gm * si_gm + j_gm * sj_gm + q] = prim[q];
     }
 }
 
@@ -332,16 +362,15 @@ int main()
     int blocks_per_dim_j = (nj + thread_per_dim_j - 1) / thread_per_dim_j;
     dim3 group_size = dim3(blocks_per_dim_i, blocks_per_dim_j, 1);
     dim3 block_size = dim3(thread_per_dim_i, thread_per_dim_j, 1);
+    int shared_memory = (block_size.x + 2) * (block_size.y + 2) * 4 * sizeof(real);
 
-    while (time < 0.1)
+    while (time < 0.5)
     {
         clock_t start = clock();
 
         for (int i = 0; i < fold; ++i)
         {
-            update_struct_do_compute_flux<<<group_size, block_size>>>(update);
-            update_struct_do_advance_cons<<<group_size, block_size>>>(update, dt);
-
+            update_struct_do_advance_cons<<<group_size, block_size, shared_memory>>>(update, dt);
             time += dt;
             iteration += 1;
         }
@@ -357,7 +386,6 @@ int main()
     update_struct_del(update);
 
     FILE* outfile = fopen("euler2d.dat", "w");
-
     for (int i = 0; i < ni; ++i)
     {
         for (int j = 0; j < nj; ++j)
@@ -369,6 +397,7 @@ int main()
         }
     }
     fclose(outfile);
+
     free(primitive);
     return 0;
 }
