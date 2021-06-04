@@ -280,8 +280,8 @@ __global__ void update_struct_do_advance_cons(struct UpdateStruct update, real d
 
 int main()
 {
-    const int ni = 1024;
-    const int nj = 1024;
+    const int ni = 4096;
+    const int nj = 4096;
     const int fold = 10;
     const real x0 = 0.0;
     const real x1 = 1.0;
@@ -300,21 +300,20 @@ int main()
     real time = 0.0;
     real dt = min2(dx, dy) * 0.05;
 
-    int thread_per_dim_i = 16;
-    int thread_per_dim_j = 16;
+    int thread_per_dim_i = 8;
+    int thread_per_dim_j = 8;
     int blocks_per_dim_i = (ni + thread_per_dim_i - 1) / thread_per_dim_i;
     int blocks_per_dim_j = (nj + thread_per_dim_j - 1) / thread_per_dim_j;
     dim3 group_size = dim3(blocks_per_dim_i, blocks_per_dim_j, 1);
     dim3 block_size = dim3(thread_per_dim_i, thread_per_dim_j, 1);
 
-    while (time < 0.05)
+    while (time < 0.2)
     {
         clock_t start = clock();
 
         for (int i = 0; i < fold; ++i)
         {
             update_struct_do_advance_cons<<<group_size, block_size>>>(update, dt);
-
             time += dt;
             iteration += 1;
         }
@@ -329,18 +328,18 @@ int main()
     update_struct_get_primitive(update, primitive);
     update_struct_del(update);
 
-    // FILE* outfile = fopen("euler2d.dat", "w");
-    // for (int i = 0; i < ni; ++i)
-    // {
-    //     for (int j = 0; j < nj; ++j)
-    //     {
-    //         real *prim = &primitive[4 * (i * nj + j)];
-    //         real x = (i + 0.5) * dx;
-    //         real y = (j + 0.5) * dy;
-    //         fprintf(outfile, "%f %f %f %f %f %f\n", x, y, prim[0], prim[1], prim[2], prim[3]);
-    //     }
-    // }
-    // fclose(outfile);
+    FILE* outfile = fopen("euler2d.dat", "w");
+    for (int i = 0; i < ni; ++i)
+    {
+        for (int j = 0; j < nj; ++j)
+        {
+            real *prim = &primitive[4 * (i * nj + j)];
+            real x = (i + 0.5) * dx;
+            real y = (j + 0.5) * dy;
+            fprintf(outfile, "%f %f %f %f %f %f\n", x, y, prim[0], prim[1], prim[2], prim[3]);
+        }
+    }
+    fclose(outfile);
 
     free(primitive);
     return 0;

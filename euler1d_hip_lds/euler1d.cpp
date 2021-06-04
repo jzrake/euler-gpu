@@ -308,7 +308,6 @@ int main()
     update_struct_del(update);
 
     FILE* outfile = fopen("euler1d.dat", "w");
-
     for (int i = 0; i < num_zones; ++i)
     {
         real *prim = &primitive[i * 4];
